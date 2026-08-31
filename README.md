@@ -20,6 +20,7 @@ flowchart LR
 - `scripts/task_dag_to_ub_traffic.py`：把 DAG 中的网络阶段降级为 ns-3-UB phase。
 - `configs/mooncake_pd_store_config_v6_layer_pipeline.json`：可运行的示例配置。
 - `docs/pipeline.md`：完整模型、字段映射、phase 语义和局限说明。
+- [`docs/clos-network-basics.md`](docs/clos-network-basics.md)：Clos、ToR、Aggregation/Spine Block、项目拓扑映射及与 Jupiter OCS 的关系。
 - `examples/sample_trace.jsonl`：最小输入示例。
 - `tests/test_pipeline.py`：关键依赖、流水延迟和 uint32 拆分测试。
 
@@ -58,4 +59,3 @@ python3 -m unittest discover -s tests -v
 
 > 配置中的 `kv_bytes_per_token`、Prefill/Decode 时间和 Storage 延迟是可运行的
 > 示例参数，不是从 trace 自动推导的实测值。正式实验前应按实际模型、精度和硬件校准。
-
