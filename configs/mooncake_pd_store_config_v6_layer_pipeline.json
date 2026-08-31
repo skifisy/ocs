@@ -1,0 +1,35 @@
+{
+  "model": {
+    "kv_bytes_per_token": 327680,
+    "block_tokens": 512,
+    "num_layers": 78
+  },
+  "timing": {
+    "prefill_us_per_token": 10.0,
+    "decode_us_per_token": 50.0,
+    "storage_latency_us": 150
+  },
+  "compute": {
+    "p_nodes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    "d_nodes": [12, 13, 14, 15],
+    "server_ports": [0],
+    "p_placement": {
+      "hash_blocks": 2,
+      "exclude_hash_ids": []
+    }
+  },
+  "storage": {
+    "nodes": [16],
+    "ports": [0]
+  },
+  "kv_delivery": {
+    "rewrite_full_prefix": true,
+    "storage_to_d_full_prefix": true,
+    "layer_pipeline": {
+      "enabled": true,
+      "split_prefix_store_write_by_layer": true,
+      "storage_to_d_streaming": false
+    }
+  }
+}
+
