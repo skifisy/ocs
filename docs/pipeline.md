@@ -14,22 +14,22 @@
 
 ```mermaid
 flowchart TD
-    A["请求到达"] --> R["HIT KV：Storage → P"]
+    A["请求到达"] --> R["P 发起 Read：Storage 返回 HIT KV"]
     R --> C["MISS Token：P 逐层 Prefill"]
     C --> W["每层就绪：P → Storage"]
     W --> S["全部写完成 + Storage commit"]
-    S --> T["完整 Prefix：Storage → D"]
+    S --> T["D 发起 Read：Storage 返回完整 Prefix"]
     T --> D["Decode"]
     D --> O["Decode KV：D → Storage"]
 ```
 
 关键语义：
 
-- HIT block 的 KV 从 Storage 读取到 P；
+- HIT block 由 P 向 Storage 发起 `MEM_LOAD`，响应携带 KV 返回 P；
 - Prefill 只计算 MISS token；
 - 每层计算完成后，立即写该层的**完整 Prefix KV**，不仅是 MISS block；
 - 第 `i` 层网络写不阻塞第 `i+1` 层计算，二者可重叠；
-- Storage→D 不逐层流式发送，而是在所有 P→Storage 写和 commit 完成后发送完整 Prefix；
+- D 在所有 P→Storage 写和 commit 完成后向 Storage 发起 `MEM_LOAD`，响应返回完整 Prefix；
 - Decode 完成后，生成的 KV 合并成一次 D→Storage 写；
 - P/D 无亲和关系，也没有 P→D 直连流量。
 
@@ -88,11 +88,11 @@ P→Storage 完成时间绑定。
 
 | task_type | task_class | 路径/作用 | 关键依赖 |
 |---|---|---|---|
-| `PREFIX_READ` | NETWORK | Storage→P，读取 HIT block | 绝对释放时间包含 Storage 访问延迟 |
+| `PREFIX_READ` | NETWORK | P→Storage 发起 Read；响应 Storage→P | 绝对释放时间包含折叠的 Storage 访问延迟 |
 | `PREFILL_LAYER` | COMPUTE | P 逐层计算 MISS token | Layer 0 等全部 HIT read；层间串行 |
 | `PREFIX_STORE_WRITE` | NETWORK | P→Storage，逐层写完整 Prefix | 第 i 层写只等第 i 层计算 |
 | `PREFIX_STORE_COMMIT` | TIMER | 固定 Storage commit 延迟 | 等全部 Prefix write |
-| `STORAGE_TO_D` | NETWORK | Storage→D，按 block 发送完整 Prefix | 等 commit |
+| `STORAGE_TO_D` | NETWORK | D→Storage 发起 Read；响应 Storage→D | 等 commit |
 | `DECODE` | COMPUTE | D 上的 Decode | 等全部 Storage→D |
 | `DECODE_WRITE` | NETWORK | D→Storage，写输出 KV | 等 Decode |
 
@@ -124,7 +124,7 @@ T_{prefill}=miss\_tokens\times prefill\_us\_per\_token
 | `taskId` | 转换器重新分配的全局网络任务 ID |
 | `sourceNode` / `destNode` | DAG 的 `src_node` / `dst_node` |
 | `dataSize(Byte)` | DAG `bytes`；超过 uint32 最大值时拆分 |
-| `opType` | 读方向映射 `URMA_READ`，写方向映射 `URMA_WRITE` |
+| `opType` | 读取映射 `MEM_LOAD`，写入映射 `MEM_STORE`；均由 P/D 向 Storage 发起 |
 | `priority` | `--priority`，默认 7 |
 | `delay` | 绝对释放时间或前驱 phase 完成后的相对等待 |
 | `phaseId` | 同一请求、同一网络 stage 共享一个 phase |
@@ -179,7 +179,7 @@ T_{prefill}=miss\_tokens\times prefill\_us\_per\_token
 - Cache 是 hash 集合命中，不要求最长连续 Prefix；
 - 新 block 的可见性按 trace 时间戳推进，不等待真实 DAG 写完成；
 - 全命中请求仍会把完整 Prefix 从 P 重写到 Storage；
-- Storage→D 不做逐层流水；
+- D 的 Prefix Read 不做逐层流水；
 - Decode 及 Decode 写回均按整个输出聚合；
 - DAG 没有表达同一 P/D 节点上多个请求的计算资源排队；
 - 端口字段不会进入当前 `traffic.csv`，最终链路/端口选择取决于 ns-3-UB 配置。
@@ -191,4 +191,3 @@ T_{prefill}=miss\_tokens\times prefill\_us\_per\_token
 3. 用 `traffic_phase_debug.csv` 核对每个请求的四个 phase 和三类折叠延迟；
 4. 在小 trace 上确认后，再转换完整 trace；
 5. 若改变全 Prefix 重写、Storage→D 流水或 cache 可见性，两个脚本和文档应一起修改。
-

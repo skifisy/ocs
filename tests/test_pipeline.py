@@ -66,6 +66,8 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(reads), 1)
         self.assertEqual(len(computes), 2)
         self.assertEqual(len(writes), 4)  # 2 blocks x 2 layers
+        self.assertEqual(reads[0]['src_node'], 0)  # P initiates the read
+        self.assertEqual(reads[0]['dst_node'], 2)  # Storage is the target
         self.assertEqual([row['duration_us'] for row in computes], [4, 4])
         self.assertEqual(sorted({row['layer_ready_offset_us'] for row in writes}), [4, 8])
         self.assertEqual(debug[1]['prefix_hits'], 1)
@@ -85,6 +87,11 @@ class PipelineTest(unittest.TestCase):
         s_to_d_rows = [row for row in converted if row['phaseId'] == 12]
         self.assertEqual({row['delay'] for row in s_to_d_rows}, {'5us'})
         self.assertEqual({row['dependOnPhases'] for row in s_to_d_rows}, {'11'})
+        self.assertEqual({row['opType'] for row in converted if row['phaseId'] == 10}, {'MEM_LOAD'})
+        self.assertEqual({row['opType'] for row in write_rows}, {'MEM_STORE'})
+        self.assertEqual({row['opType'] for row in s_to_d_rows}, {'MEM_LOAD'})
+        self.assertEqual({row['sourceNode'] for row in s_to_d_rows}, {1})
+        self.assertEqual({row['destNode'] for row in s_to_d_rows}, {2})
 
     def test_same_timestamp_requests_share_cache_snapshot(self):
         model = tiny_model()

@@ -7,3 +7,5 @@ mooncake_pd_store_dag_out/
 traffic.csv
 traffic_phase_debug.csv
 
+# End-to-end runs are intentionally kept outside version control.
+runs/

@@ -1,0 +1,264 @@
+diff --git a/src/unified-bus/model/protocol/ub-ldst-api.cc b/src/unified-bus/model/protocol/ub-ldst-api.cc
+index deecdf9..385d234 100644
+--- a/src/unified-bus/model/protocol/ub-ldst-api.cc
++++ b/src/unified-bus/model/protocol/ub-ldst-api.cc
+@@ -183,6 +183,10 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
+     UbDataLink::GenPacketHeader(ackp, false, true, linkPacketHeader.GetCreditTargetVL(), linkPacketHeader.GetPacketVL(),
+                                 linkPacketHeader.GetLoadBalanceMode(), linkPacketHeader.GetRoutingPolicy(),
+                                 UbDatalinkHeaderConfig::PACKET_UB_MEM);
++    UbFlowTag flowTag;
++    if (packet->PeekPacketTag(flowTag)) {
++        ackp->AddPacketTag(flowTag);
++    }
+ 
+     RoutingKey rtKey;
+     rtKey.sip = utils::Cna16ToIp(memHeader.GetScna()).Get();
+@@ -207,8 +211,6 @@ void UbLdstApi::RecvDataPacket(Ptr<Packet> packet)
+     NS_LOG_DEBUG("[UbLdstApi RecvDataPacket] Send Ack. NodeId: " << m_nodeId << " PacketUid: "
+                   << ackp->GetUid() << " packetSize: " << ackp->GetSize() << " destPort: " << destPort);
+     if (m_pktTraceEnabled) {
+-        UbFlowTag flowTag;
+-        packet->PeekPacketTag(flowTag);
+         UbPacketTraceTag traceTag;
+         packet->PeekPacketTag(traceTag);
+         LdstRecvNotify(packet->GetUid(), utils::Cna16ToNodeId(memHeader.GetDcna()),
+diff --git a/src/unified-bus/model/ub-port.cc b/src/unified-bus/model/ub-port.cc
+index 48d1ad6..b591ab8 100644
+--- a/src/unified-bus/model/ub-port.cc
++++ b/src/unified-bus/model/ub-port.cc
+@@ -162,6 +162,10 @@ TypeId UbPort::GetTypeId(void)
+                             "Port Rx",
+                             MakeTraceSourceAccessor(&UbPort::m_tracePortRxNotify),
+                             "ns3::UbPort::PortRxNotify")
++            .AddTraceSource("L1PairNotify",
++                            "One end-to-end packet delivered from its ingress L1 to its egress L1",
++                            MakeTraceSourceAccessor(&UbPort::m_traceL1PairNotify),
++                            "ns3::UbPort::L1PairNotify")
+             .AddTraceSource("PktRcvNotify",
+                             "Notify after receiving the data packet.",
+                             MakeTraceSourceAccessor(&UbPort::m_tracePktRcvNotify),
+@@ -298,7 +302,23 @@ void UbPort::DequeuePacket(void)
+ 
+ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
+ {
+-    PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
++    UbFlowTag flowTag;
++    bool hasTaskId = packet->PeekPacketTag(flowTag);
++    PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize(),
++                 hasTaskId ? flowTag.GetFlowId() : 0, hasTaskId);
++    Ptr<UbPort> peerPort = m_channel->GetDestination(this);
++    Ptr<UbSwitch> localSwitch = GetNode()->GetObject<UbSwitch>();
++    Ptr<UbSwitch> peerSwitch = peerPort->GetNode()->GetObject<UbSwitch>();
++    if (localSwitch != nullptr && peerSwitch != nullptr
++        && localSwitch->GetNodeType() == UB_SWITCH
++        && peerSwitch->GetNodeType() == UB_DEVICE) {
++        UbL1TraceTag l1Tag;
++        if (packet->PeekPacketTag(l1Tag)) {
++            L1PairNotify(l1Tag.GetSrcL1(), GetNode()->GetId(), packet->GetUid(),
++                         packet->GetSize(), hasTaskId ? flowTag.GetFlowId() : 0,
++                         hasTaskId);
++        }
++    }
+     NS_LOG_DEBUG("[UbPort send] nodetype: " << g_node_type_map[GetNode()->GetObject<UbSwitch>()->GetNodeType()]
+         << " NodeId: " << GetNode()->GetId() << " PortId: " << m_portId << " send to:"
+         << " NodeId: " << m_channel->GetDestination(this)->GetNode()->GetId()
+@@ -336,6 +356,16 @@ void UbPort::Receive(Ptr<Packet> packet)
+         << " NodeId: " << m_channel->GetDestination(this)->GetNode()->GetId()
+         << " PortId: " << m_channel->GetDestination(this)->GetIfIndex()
+         << " PacketUid: "<< packet->GetUid());
++    Ptr<UbPort> peerPort = m_channel->GetDestination(this);
++    Ptr<UbSwitch> localSwitch = GetNode()->GetObject<UbSwitch>();
++    Ptr<UbSwitch> peerSwitch = peerPort->GetNode()->GetObject<UbSwitch>();
++    if (localSwitch != nullptr && peerSwitch != nullptr
++        && localSwitch->GetNodeType() == UB_SWITCH
++        && peerSwitch->GetNodeType() == UB_DEVICE) {
++        UbL1TraceTag oldTag;
++        packet->RemovePacketTag(oldTag);
++        packet->AddPacketTag(UbL1TraceTag(GetNode()->GetId()));
++    }
+     if (m_pktTraceEnabled) {
+         UbPacketTraceTag tag;
+         packet->RemovePacketTag(tag);
+@@ -570,9 +600,10 @@ std::vector<uint32_t> UbPort::GetRcvQueueSize()
+     return m_revQueueSize;
+ }
+ 
+-void UbPort::PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
++void UbPort::PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size,
++                          uint32_t taskId, bool hasTaskId)
+ {
+-    m_tracePortTxNotify(nodeId, mPortId, size);
++    m_tracePortTxNotify(nodeId, mPortId, size, taskId, hasTaskId);
+ }
+ 
+ void UbPort::PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
+@@ -580,6 +611,12 @@ void UbPort::PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
+     m_tracePortRxNotify(nodeId, mPortId, size);
+ }
+ 
++void UbPort::L1PairNotify(uint32_t srcL1, uint32_t dstL1, uint32_t packetUid,
++                          uint32_t size, uint32_t taskId, bool hasTaskId)
++{
++    m_traceL1PairNotify(srcL1, dstL1, packetUid, size, taskId, hasTaskId);
++}
++
+ void UbPort::DoDispose()
+ {
+     NS_LOG_FUNCTION(this);
+diff --git a/src/unified-bus/model/ub-port.h b/src/unified-bus/model/ub-port.h
+index 9ad744f..8fabcb0 100644
+--- a/src/unified-bus/model/ub-port.h
++++ b/src/unified-bus/model/ub-port.h
+@@ -167,11 +167,15 @@ public:
+     void TransmitComplete();
+ private:
+ 
+-    TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortTxNotify;
++    TracedCallback<uint32_t, uint32_t, uint32_t, uint32_t, bool> m_tracePortTxNotify;
+     TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortRxNotify;
++    TracedCallback<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, bool> m_traceL1PairNotify;
+ 
+-    void PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size);
++    void PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size,
++                      uint32_t taskId, bool hasTaskId);
+     void PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size);
++    void L1PairNotify(uint32_t srcL1, uint32_t dstL1, uint32_t packetUid,
++                      uint32_t size, uint32_t taskId, bool hasTaskId);
+ 
+     bool TransmitStart(Ptr<Packet> p);
+ 
+diff --git a/src/unified-bus/model/ub-tag.h b/src/unified-bus/model/ub-tag.h
+index 0803565..389e96c 100644
+--- a/src/unified-bus/model/ub-tag.h
++++ b/src/unified-bus/model/ub-tag.h
+@@ -277,5 +277,58 @@ private:
+     uint32_t m_flowSize{0};
+ };
+ 
++class UbL1TraceTag : public Tag {
++public:
++    UbL1TraceTag()
++        : Tag()
++    {
++    }
++
++    explicit UbL1TraceTag(uint32_t srcL1)
++        : Tag(),
++          m_srcL1(srcL1)
++    {
++    }
++
++    static TypeId GetTypeId()
++    {
++        static TypeId tid = TypeId("ns3::UbL1TraceTag")
++                                .SetParent<Tag>()
++                                .AddConstructor<UbL1TraceTag>();
++        return tid;
++    }
++
++    TypeId GetInstanceTypeId() const override
++    {
++        return GetTypeId();
++    }
++
++    uint32_t GetSerializedSize() const override
++    {
++        return 4;
++    }
++
++    void Serialize(TagBuffer i) const override
++    {
++        i.WriteU32(m_srcL1);
++    }
++
++    void Deserialize(TagBuffer i) override
++    {
++        m_srcL1 = i.ReadU32();
++    }
++
++    void Print(std::ostream& os) const override
++    {
++        os << "SrcL1:" << m_srcL1;
++    }
++
++    void SetSrcL1(uint32_t srcL1) { m_srcL1 = srcL1; }
++    uint32_t GetSrcL1() const { return m_srcL1; }
++
++private:
++    uint32_t m_srcL1{0};
++};
++
+ }
+ #endif
+diff --git a/src/unified-bus/model/ub-utils.cc b/src/unified-bus/model/ub-utils.cc
+index d3c7b4f..db07dde 100644
+--- a/src/unified-bus/model/ub-utils.cc
++++ b/src/unified-bus/model/ub-utils.cc
+@@ -314,10 +314,16 @@ inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNu
+     PrintTraceInfo(fileName, info);
+ }
+ 
+-inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
++inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size,
++                                  uint32_t taskId, bool hasTaskId)
+ {
+     std::ostringstream oss;
+     oss << "Port Tx, port ID: " << portId << " PacketSize: " << size;
++    if (hasTaskId) {
++        oss << " TaskId: " << taskId;
++    } else {
++        oss << " TaskId: NA";
++    }
+     string info = oss.str();
+     string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
+     PrintTraceInfo(fileName, info);
+@@ -332,6 +338,21 @@ inline void UbUtils::PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t siz
+     PrintTraceInfo(fileName, info);
+ }
+ 
++inline void UbUtils::L1PairNotify(uint32_t srcL1, uint32_t dstL1, uint32_t packetUid,
++                                  uint32_t size, uint32_t taskId, bool hasTaskId)
++{
++    std::ostringstream oss;
++    oss << "L1 Pair Tx, SrcL1: " << srcL1 << " DstL1: " << dstL1
++        << " PacketUid: " << packetUid << " PacketSize: " << size;
++    if (hasTaskId) {
++        oss << " TaskId: " << taskId;
++    } else {
++        oss << " TaskId: NA";
++    }
++    string fileName = trace_path + "runlog/L1PairTrace.tr";
++    PrintTraceInfo(fileName, oss.str());
++}
++
+ inline void UbUtils::LdstThreadMemTaskStartsNotify(uint32_t nodeId, uint32_t memTaskId)
+ {
+     string info = "Mem Task Starts,taskId: " + std::to_string(memTaskId);
+@@ -865,6 +886,7 @@ void UbUtils::TopoTraceConnect()
+             if (port) {
+                 port->TraceConnectWithoutContext("PortTxNotify", MakeCallback(PortTxNotify));
+                 port->TraceConnectWithoutContext("PortRxNotify", MakeCallback(PortRxNotify));
++                port->TraceConnectWithoutContext("L1PairNotify", MakeCallback(L1PairNotify));
+             } else {
+                 NS_ASSERT_MSG(0, "port is null");
+             }
+diff --git a/src/unified-bus/model/ub-utils.h b/src/unified-bus/model/ub-utils.h
+index b012df8..2f8bfcf 100644
+--- a/src/unified-bus/model/ub-utils.h
++++ b/src/unified-bus/model/ub-utils.h
+@@ -170,10 +170,14 @@ private:
+ 
+     static void DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
+ 
+-    static void PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
++    static void PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size,
++                             uint32_t taskId, bool hasTaskId);
+ 
+     static void PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
+ 
++    static void L1PairNotify(uint32_t srcL1, uint32_t dstL1, uint32_t packetUid,
++                             uint32_t size, uint32_t taskId, bool hasTaskId);
++
+     static void LdstThreadMemTaskStartsNotify(uint32_t nodeId, uint32_t memTaskId);
+ 
+     static void LdstMemTaskCompletesNotify(uint32_t nodeId, uint32_t taskId);

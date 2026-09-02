@@ -3,13 +3,15 @@
 
 The model implemented here is intentionally explicit:
 
-1. Cached prefix blocks are read from Storage to a Prefill (P) node.
+1. P initiates a LOAD against Storage for cached prefix blocks; the response
+   carries the KV bytes from Storage back to P.
 2. Missing prefix tokens are computed layer by layer on P.
 3. When layer ``i`` becomes ready, the full-prefix KV bytes belonging to that
    layer are written from P to Storage.  Layer ``i + 1`` computation does not
    wait for this network write, so computation and network transfer overlap.
 4. Storage waits for every layer write, then applies a fixed commit delay.
-5. Storage sends the full prefix to a Decode (D) node.
+5. D initiates a LOAD against Storage; the response carries the full prefix
+   from Storage back to D.
 6. D decodes and writes the generated KV back to Storage.
 
 The output is an application-level DAG.  Network tasks have zero duration;
@@ -271,7 +273,9 @@ def build_formal_request_tasks(req, model, seen_snapshot, next_task_id):
     storage_to_d_ids = []
     new_hashes = [b['hash_id'] for b in blocks if not b['hit']]
 
-    # HIT blocks first pay fixed storage access latency, then traverse Storage -> P.
+    # P initiates a read against Storage for every HIT block.  ``bytes`` is the
+    # requested response length; ns-3-UB's MEM_LOAD path carries the small
+    # request P -> Storage and the data response Storage -> P.
     for block in blocks:
         if not block['hit']:
             continue
@@ -283,13 +287,15 @@ def build_formal_request_tasks(req, model, seen_snapshot, next_task_id):
         tasks.append(make_task(
             task_id, req['request_id'], 'FORMAL', 'NETWORK', 'PREFIX_READ',
             release_time_us=arrival_us + model.storage_latency_us,
-            src_node=model.choose_storage(block_hash),
-            src_port=model.choose_storage_port(block_hash), dst_node=p_node,
-            dst_port=model.choose_server_port('prefix-read-p', req['request_id'], block_hash),
+            src_node=p_node,
+            src_port=model.choose_server_port('prefix-read-p', req['request_id'], block_hash),
+            dst_node=model.choose_storage(block_hash),
+            dst_port=model.choose_storage_port(block_hash),
             num_bytes=tokens * model.kv_bytes_per_token, hash_id=block_hash,
             block_index=block['block_index'], block_tokens=tokens,
             p_node=p_node, d_node=d_node, depends_on=[],
-            comment='HIT: Storage -> P. Prefill waits for all HIT reads.'))
+            comment=('HIT: P initiates MEM_LOAD from Storage; response carries '
+                     'Storage -> P KV. Prefill waits for all HIT reads.')))
 
     # MISS Prefill is a serial chain of per-layer compute tasks.
     layer_schedule = model.layer_compute_schedule_us(miss_tokens)
@@ -373,13 +379,15 @@ def build_formal_request_tasks(req, model, seen_snapshot, next_task_id):
         storage_to_d_ids.append(task_id)
         tasks.append(make_task(
             task_id, req['request_id'], 'FORMAL', 'NETWORK', 'STORAGE_TO_D',
-            src_node=model.choose_storage(block_hash),
-            src_port=model.choose_storage_port(block_hash), dst_node=d_node,
-            dst_port=model.choose_server_port('storage-to-d', req['request_id'], block_hash),
+            src_node=d_node,
+            src_port=model.choose_server_port('storage-to-d', req['request_id'], block_hash),
+            dst_node=model.choose_storage(block_hash),
+            dst_port=model.choose_storage_port(block_hash),
             num_bytes=tokens * model.kv_bytes_per_token, hash_id=block_hash,
             block_index=block['block_index'], block_tokens=tokens,
             p_node=p_node, d_node=d_node, depends_on=storage_to_d_deps,
-            comment='Full-prefix Storage -> D after all prefix writes commit.'))
+            comment=('D initiates MEM_LOAD after prefix commit; response carries '
+                     'the full prefix from Storage -> D.')))
 
     decode_id = None
     if req['output_length'] > 0:

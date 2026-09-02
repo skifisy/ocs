@@ -1,0 +1,83 @@
+diff --git a/src/unified-bus/model/ub-port.cc b/src/unified-bus/model/ub-port.cc
+index 48d1ad6..d391394 100644
+--- a/src/unified-bus/model/ub-port.cc
++++ b/src/unified-bus/model/ub-port.cc
+@@ -298,7 +298,10 @@ void UbPort::DequeuePacket(void)
+ 
+ void UbPort::TransmitPacket(Ptr<Packet> packet, Time delay)
+ {
+-    PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize());
++    UbFlowTag flowTag;
++    bool hasTaskId = packet->PeekPacketTag(flowTag);
++    PortTxNotify(GetNode()->GetId(), m_portId, packet->GetSize(),
++                 hasTaskId ? flowTag.GetFlowId() : 0, hasTaskId);
+     NS_LOG_DEBUG("[UbPort send] nodetype: " << g_node_type_map[GetNode()->GetObject<UbSwitch>()->GetNodeType()]
+         << " NodeId: " << GetNode()->GetId() << " PortId: " << m_portId << " send to:"
+         << " NodeId: " << m_channel->GetDestination(this)->GetNode()->GetId()
+@@ -570,9 +573,10 @@ std::vector<uint32_t> UbPort::GetRcvQueueSize()
+     return m_revQueueSize;
+ }
+ 
+-void UbPort::PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
++void UbPort::PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size,
++                          uint32_t taskId, bool hasTaskId)
+ {
+-    m_tracePortTxNotify(nodeId, mPortId, size);
++    m_tracePortTxNotify(nodeId, mPortId, size, taskId, hasTaskId);
+ }
+ 
+ void UbPort::PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size)
+diff --git a/src/unified-bus/model/ub-port.h b/src/unified-bus/model/ub-port.h
+index 9ad744f..49d0eef 100644
+--- a/src/unified-bus/model/ub-port.h
++++ b/src/unified-bus/model/ub-port.h
+@@ -167,10 +167,11 @@ public:
+     void TransmitComplete();
+ private:
+ 
+-    TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortTxNotify;
++    TracedCallback<uint32_t, uint32_t, uint32_t, uint32_t, bool> m_tracePortTxNotify;
+     TracedCallback<uint32_t, uint32_t, uint32_t> m_tracePortRxNotify;
+ 
+-    void PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size);
++    void PortTxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size,
++                      uint32_t taskId, bool hasTaskId);
+     void PortRxNotify(uint32_t nodeId, uint32_t mPortId, uint32_t size);
+ 
+     bool TransmitStart(Ptr<Packet> p);
+diff --git a/src/unified-bus/model/ub-utils.cc b/src/unified-bus/model/ub-utils.cc
+index d3c7b4f..1830b8f 100644
+--- a/src/unified-bus/model/ub-utils.cc
++++ b/src/unified-bus/model/ub-utils.cc
+@@ -314,10 +314,16 @@ inline void UbUtils::DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNu
+     PrintTraceInfo(fileName, info);
+ }
+ 
+-inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size)
++inline void UbUtils::PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size,
++                                  uint32_t taskId, bool hasTaskId)
+ {
+     std::ostringstream oss;
+     oss << "Port Tx, port ID: " << portId << " PacketSize: " << size;
++    if (hasTaskId) {
++        oss << " TaskId: " << taskId;
++    } else {
++        oss << " TaskId: NA";
++    }
+     string info = oss.str();
+     string fileName = trace_path + "runlog/PortTrace_node_" + to_string(nodeId) + "_port_" + to_string(portId) + ".tr";
+     PrintTraceInfo(fileName, info);
+diff --git a/src/unified-bus/model/ub-utils.h b/src/unified-bus/model/ub-utils.h
+index b012df8..17d327f 100644
+--- a/src/unified-bus/model/ub-utils.h
++++ b/src/unified-bus/model/ub-utils.h
+@@ -170,7 +170,8 @@ private:
+ 
+     static void DagWqeTaskCompletesNotify(uint32_t nodeId, uint32_t jettyNum, uint32_t taskId);
+ 
+-    static void PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
++    static void PortTxNotify(uint32_t nodeId, uint32_t portId, uint32_t size,
++                             uint32_t taskId, bool hasTaskId);
+ 
+     static void PortRxNotify(uint32_t nodeId, uint32_t portId, uint32_t size);
+ 

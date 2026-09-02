@@ -1,3 +1,4 @@
+import argparse
 import csv
 from collections import defaultdict
 from pathlib import Path
@@ -17,7 +18,7 @@ LINK_RATE_GBPS = 400
 LINK_DELAY_US = 1.0
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CASE_DIR = PROJECT_ROOT / 'ns-3-ub' / 'scratch' / 'mooncake_pd_storage_topology'
+DEFAULT_CASE_DIR = PROJECT_ROOT / 'runs' / 'mooncake_pd_storage_topology'
 
 
 def generate_ids():
@@ -274,12 +275,12 @@ def validate_topology(links, compute_server_ids, storage_server_ids, compute_lea
 def generate_node_csv(path, compute_server_ids, storage_server_ids, compute_leaf_ids, storage_leaf_ids, spine_ids):
     with open(path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['nodeId', 'nodeType', 'portNum', 'allocationDelay', 'forwardDelay'])
-        writer.writerow([f'{compute_server_ids[0]}..{compute_server_ids[-1]}', 'DEVICE', COMPUTE_SERVER_PORTS, '1ns', ''])
-        writer.writerow([f'{storage_server_ids[0]}..{storage_server_ids[-1]}', 'DEVICE', STORAGE_SERVER_PORTS, '1ns', ''])
-        writer.writerow([f'{compute_leaf_ids[0]}..{compute_leaf_ids[-1]}', 'SWITCH', LEAF_TOTAL_PORTS, '1ns', ''])
-        writer.writerow([f'{storage_leaf_ids[0]}..{storage_leaf_ids[-1]}', 'SWITCH', LEAF_TOTAL_PORTS, '1ns', ''])
-        writer.writerow([f'{spine_ids[0]}..{spine_ids[-1]}', 'SWITCH', SPINE_TOTAL_PORTS, '1ns', ''])
+        writer.writerow(['nodeId', 'nodeType', 'portNum', 'forwardDelay'])
+        writer.writerow([f'{compute_server_ids[0]}..{compute_server_ids[-1]}', 'DEVICE', COMPUTE_SERVER_PORTS, '1ns'])
+        writer.writerow([f'{storage_server_ids[0]}..{storage_server_ids[-1]}', 'DEVICE', STORAGE_SERVER_PORTS, '1ns'])
+        writer.writerow([f'{compute_leaf_ids[0]}..{compute_leaf_ids[-1]}', 'SWITCH', LEAF_TOTAL_PORTS, '1ns'])
+        writer.writerow([f'{storage_leaf_ids[0]}..{storage_leaf_ids[-1]}', 'SWITCH', LEAF_TOTAL_PORTS, '1ns'])
+        writer.writerow([f'{spine_ids[0]}..{spine_ids[-1]}', 'SWITCH', SPINE_TOTAL_PORTS, '1ns'])
 
 
 def generate_topology_csv(links, path):
@@ -298,7 +299,16 @@ def generate_topology_csv(links, path):
 
 
 def main():
-    CASE_DIR.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(
+        description='Generate the 37-endpoint, 20-L1, 10-L2 Mooncake Clos topology.')
+    parser.add_argument(
+        '--case-dir',
+        type=Path,
+        default=DEFAULT_CASE_DIR,
+        help=f'output case directory (default: {DEFAULT_CASE_DIR})')
+    args = parser.parse_args()
+    case_dir = args.case_dir.expanduser().resolve()
+    case_dir.mkdir(parents=True, exist_ok=True)
     compute_server_ids, storage_server_ids, compute_leaf_ids, storage_leaf_ids, spine_ids = generate_ids()
 
     print('=' * 70)
@@ -318,8 +328,8 @@ def main():
     link_id = generate_leaf_spine_links(links, link_id, all_leaf_ids, spine_ids)
     validate_topology(links, compute_server_ids, storage_server_ids, compute_leaf_ids, storage_leaf_ids, spine_ids)
 
-    node_file = CASE_DIR / 'node.csv'
-    topology_file = CASE_DIR / 'topology.csv'
+    node_file = case_dir / 'node.csv'
+    topology_file = case_dir / 'topology.csv'
     generate_node_csv(node_file, compute_server_ids, storage_server_ids, compute_leaf_ids, storage_leaf_ids, spine_ids)
     generate_topology_csv(links, topology_file)
 

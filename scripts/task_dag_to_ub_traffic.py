@@ -23,10 +23,13 @@ from collections import defaultdict
 
 UINT32_MAX = (1 << 32) - 1
 TYPE_TO_OP = {
-    'PREFIX_READ': 'URMA_READ',
-    'PREFIX_STORE_WRITE': 'URMA_WRITE',
-    'STORAGE_TO_D': 'URMA_READ',
-    'DECODE_WRITE': 'URMA_WRITE',
+    # Reads and writes are initiated by the compute endpoint against Storage.
+    # ns-3-UB's LD/ST path emits a small LOAD request followed by the data
+    # response, and emits STORE data followed by an ACK.
+    'PREFIX_READ': 'MEM_LOAD',
+    'PREFIX_STORE_WRITE': 'MEM_STORE',
+    'STORAGE_TO_D': 'MEM_LOAD',
+    'DECODE_WRITE': 'MEM_STORE',
 }
 STAGE_ORDER = [
     'PREFIX_READ', 'PREFIX_STORE_WRITE', 'STORAGE_TO_D', 'DECODE_WRITE'
